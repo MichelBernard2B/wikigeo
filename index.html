@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WikiGeo</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; background-color: #f9f9f9; }
+        button { padding: 15px; font-size: 16px; background-color: #007bff; color: white; border: none; border-radius: 8px; width: 100%; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        button:active { background-color: #0056b3; }
+        input { padding: 12px; font-size: 16px; width: 100%; margin-bottom: 20px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 8px; }
+        .result { background: white; margin-bottom: 10px; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .result a { text-decoration: none; color: #333; font-weight: bold; display: block; }
+        .result span { color: #666; font-size: 0.9em; }
+        #status { font-style: italic; color: #555; margin-bottom: 20px; text-align: center; }
+    </style>
+</head>
+<body>
+    <h2 style="text-align: center;">WikiGeo - Autour de moi</h2>
+    <label>Rayon de recherche (mètres) :</label>
+    <input type="number" id="rayon" value="2000">
+    <button onclick="chercher()">Localiser et chercher</button>
+    <div id="status">Prêt</div>
+    <div id="resultats"></div>
+
+    <script>
+        function chercher() {
+            const status = document.getElementById('status');
+            const resultatsDiv = document.getElementById('resultats');
+            resultatsDiv.innerHTML = '';
+            
+            if (!navigator.geolocation) {
+                status.innerHTML = "Le GPS n'est pas supporté par votre navigateur.";
+                return;
+            }
+
+            status.innerHTML = "Acquisition du signal GPS...";
+
+            navigator.geolocation.getCurrentPosition(async (position) => {
+                const lat = position.coords.latitude;
+                const lon = position.coords.longitude;
+                const rayon = document.getElementById('rayon').value;
+                
+                status.innerHTML = `Position : ${lat.toFixed(4)}, ${lon.toFixed(4)}. Recherche...`;
+
+                // Le paramètre origin=* est crucial pour que Wikipédia autorise la requête web
+                const url = `https://fr.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord=${lat}|${lon}&gsradius=${rayon}&gslimit=50&format=json&origin=*`;
+
+                try {
+                    const response = await fetch(url);
+                    const data = await response.json();
+                    const articles = data.query.geosearch;
+
+                    if (articles.length === 0) {
+                        status.innerHTML = "Aucun article trouvé dans ce rayon.";
+                        return;
+                    }
+
+                    status.innerHTML = `${articles.length} lieux trouvés.`;
+
+                    articles.forEach(art => {
+                        const div = document.createElement('div');
+                        div.className = 'result';
+                        div.innerHTML = `<a href="https://fr.wikipedia.org/?curid=${art.pageid}" target="_blank">${art.title} <br><span>📍 à ${Math.round(art.dist)} mètres</span></a>`;
+                        resultatsDiv.appendChild(div);
+                    });
+                } catch (error) {
+                    status.innerHTML = `Erreur réseau : ${error.message}`;
+                }
+            }, (error) => {
+                status.innerHTML = `Erreur GPS : Autorisez la localisation. (${error.message})`;
+            }, { enableHighAccuracy: true });
+        }
+    </script>
+</body>
+</html>
