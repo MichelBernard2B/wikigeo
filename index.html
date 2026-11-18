@@ -16,13 +16,10 @@
         .result { background: white; margin-bottom: 10px; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .result a { text-decoration: none; color: #333; font-weight: bold; display: block; margin-bottom: 15px; }
         .result span { color: #666; font-size: 0.9em; }
-        
-        /* Styles pour les nouveaux boutons de lecture */
         .boutons-lecture { display: flex; gap: 10px; margin-top: 10px; }
         .btn-ecouter { background-color: #28a745; flex: 1; padding: 10px; font-size: 14px; }
         .btn-complet { background-color: #17a2b8; }
         .btn-stop { background-color: #dc3545; display: none; width: 100%; padding: 15px; margin-bottom: 20px; font-weight: bold; }
-        
         #status { font-style: italic; color: #555; margin-bottom: 20px; text-align: center; }
     </style>
 </head>
@@ -41,6 +38,26 @@
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('sw.js');
         }
+
+        // --- NOUVEAU : Gestion de l'écran (Wake Lock) ---
+        let wakeLock = null;
+
+        async function maintenirEcranAllume() {
+            if ('wakeLock' in navigator) {
+                try {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                } catch (err) {
+                    console.log(`Erreur Wake Lock: ${err.message}`);
+                }
+            }
+        }
+
+        function libererEcran() {
+            if (wakeLock !== null) {
+                wakeLock.release().then(() => { wakeLock = null; });
+            }
+        }
+        // -------------------------------------------------
 
         function chercher() {
             const status = document.getElementById('status');
@@ -80,7 +97,6 @@
                         div.className = 'result';
                         const titreSecurise = art.title.replace(/'/g, "\\'");
                         
-                        // Ajout des deux boutons distincts
                         div.innerHTML = `
                             <a href="https://fr.wikipedia.org/?curid=${art.pageid}" target="_blank">${art.title} <br><span>📍 à ${Math.round(art.dist)} mètres</span></a>
                             <div class="boutons-lecture">
@@ -103,7 +119,6 @@
             const btnStop = document.getElementById('btnStop');
             
             try {
-                // Si mode === 'resume', on limite à 4 phrases. Sinon on prend tout.
                 let url = `https://fr.wikipedia.org/w/api.php?action=query&prop=extracts&pageids=${pageid}&explaintext=1&format=json&origin=*`;
                 if (mode === 'resume') {
                     url += '&exsentences=4';
@@ -120,23 +135,25 @@
                 }
 
                 btnStop.style.display = 'block';
+                
+                // On verrouille l'écran allumé dès que la lecture commence
+                maintenirEcranAllume();
 
-                // On annonce le titre en premier
                 const utteranceTitre = new SpeechSynthesisUtterance(titre);
                 utteranceTitre.lang = 'fr-FR';
                 window.speechSynthesis.speak(utteranceTitre);
 
-                // Découpage par paragraphes (retour à la ligne) pour éviter le plantage du TTS Android
                 const paragraphes = texte.split('\n').filter(p => p.trim().length > 0);
 
                 paragraphes.forEach((paragraphe, index) => {
                     const lecture = new SpeechSynthesisUtterance(paragraphe);
                     lecture.lang = 'fr-FR';
                     
-                    // Cacher le bouton stop uniquement quand le tout dernier paragraphe est terminé
                     if (index === paragraphes.length - 1) {
                         lecture.onend = () => {
                             btnStop.style.display = 'none';
+                            // On autorise l'écran à s'éteindre quand c'est fini
+                            libererEcran();
                         };
                     }
                     
@@ -145,12 +162,15 @@
                 
             } catch (error) {
                 alert("Erreur lors de la récupération du texte.");
+                libererEcran();
             }
         }
 
         function stopperLecture() {
             window.speechSynthesis.cancel();
             document.getElementById('btnStop').style.display = 'none';
+            // On autorise l'écran à s'éteindre si on coupe manuellement
+            libererEcran();
         }
     </script>
 </body>
