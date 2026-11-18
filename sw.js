@@ -1,4 +1,4 @@
-const CACHE_NAME = 'wikigeo-v5';
+const CACHE_NAME = 'wikigeo-v6';
 
 self.addEventListener('install', event => {
   event.waitUntil(
