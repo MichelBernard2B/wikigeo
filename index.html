@@ -9,14 +9,20 @@
     <link rel="apple-touch-icon" href="icon.png">
     <style>
         body { font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; background-color: #f9f9f9; }
-        button { padding: 15px; font-size: 16px; background-color: #007bff; color: white; border: none; border-radius: 8px; width: 100%; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); cursor: pointer; }
-        button:active { background-color: #0056b3; }
+        button { font-size: 16px; border: none; border-radius: 8px; cursor: pointer; color: white; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .btn-principal { padding: 15px; background-color: #007bff; width: 100%; margin-bottom: 20px; }
+        .btn-principal:active { background-color: #0056b3; }
         input { padding: 12px; font-size: 16px; width: 100%; margin-bottom: 20px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 8px; }
         .result { background: white; margin-bottom: 10px; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .result a { text-decoration: none; color: #333; font-weight: bold; display: block; margin-bottom: 15px; }
         .result span { color: #666; font-size: 0.9em; }
-        .btn-ecouter { background-color: #28a745; width: auto; padding: 10px 15px; font-size: 14px; margin-bottom: 0; }
-        .btn-stop { background-color: #dc3545; display: none; margin-bottom: 20px; font-weight: bold; }
+        
+        /* Styles pour les nouveaux boutons de lecture */
+        .boutons-lecture { display: flex; gap: 10px; margin-top: 10px; }
+        .btn-ecouter { background-color: #28a745; flex: 1; padding: 10px; font-size: 14px; }
+        .btn-complet { background-color: #17a2b8; }
+        .btn-stop { background-color: #dc3545; display: none; width: 100%; padding: 15px; margin-bottom: 20px; font-weight: bold; }
+        
         #status { font-style: italic; color: #555; margin-bottom: 20px; text-align: center; }
     </style>
 </head>
@@ -24,16 +30,14 @@
     <h2 style="text-align: center;">WikiGeo - Autour de moi</h2>
     <label>Rayon de recherche (mètres) :</label>
     <input type="number" id="rayon" value="2000">
-    <button onclick="chercher()">Localiser et chercher</button>
+    <button class="btn-principal" onclick="chercher()">Localiser et chercher</button>
     
-    <!-- Bouton d'arrêt d'urgence de la voix, caché par défaut -->
     <button id="btnStop" class="btn-stop" onclick="stopperLecture()">🛑 Stopper la lecture</button>
     
     <div id="status">Prêt</div>
     <div id="resultats"></div>
 
     <script>
-        // Enregistrement du Service Worker pour le mode PWA
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('sw.js');
         }
@@ -74,13 +78,15 @@
                     articles.forEach(art => {
                         const div = document.createElement('div');
                         div.className = 'result';
-                        
-                        // On protège les apostrophes dans le titre pour ne pas casser le code (ex: L'Église)
                         const titreSecurise = art.title.replace(/'/g, "\\'");
                         
+                        // Ajout des deux boutons distincts
                         div.innerHTML = `
                             <a href="https://fr.wikipedia.org/?curid=${art.pageid}" target="_blank">${art.title} <br><span>📍 à ${Math.round(art.dist)} mètres</span></a>
-                            <button class="btn-ecouter" onclick="lireArticle(${art.pageid}, '${titreSecurise}')">🔊 Écouter le résumé</button>
+                            <div class="boutons-lecture">
+                                <button class="btn-ecouter" onclick="lireArticle(${art.pageid}, '${titreSecurise}', 'resume')">🔊 Résumé</button>
+                                <button class="btn-ecouter btn-complet" onclick="lireArticle(${art.pageid}, '${titreSecurise}', 'complet')">📖 Complet</button>
+                            </div>
                         `;
                         resultatsDiv.appendChild(div);
                     });
@@ -92,14 +98,17 @@
             }, { enableHighAccuracy: true });
         }
 
-        // Nouvelle fonction qui récupère le texte et le lit à voix haute
-        async function lireArticle(pageid, titre) {
-            stopperLecture(); // Couper la voix s'il y avait déjà une lecture en cours
+        async function lireArticle(pageid, titre, mode) {
+            stopperLecture(); 
             const btnStop = document.getElementById('btnStop');
             
             try {
-                // 1. On interroge l'API Wikipédia pour obtenir les 4 premières phrases de l'article
-                const url = `https://fr.wikipedia.org/w/api.php?action=query&prop=extracts&exsentences=4&pageids=${pageid}&explaintext=1&format=json&origin=*`;
+                // Si mode === 'resume', on limite à 4 phrases. Sinon on prend tout.
+                let url = `https://fr.wikipedia.org/w/api.php?action=query&prop=extracts&pageids=${pageid}&explaintext=1&format=json&origin=*`;
+                if (mode === 'resume') {
+                    url += '&exsentences=4';
+                }
+
                 const response = await fetch(url);
                 const data = await response.json();
                 
@@ -107,30 +116,38 @@
                 let texte = page.extract;
                 
                 if (!texte) {
-                    texte = "Désolé, aucun résumé n'est disponible pour cet article.";
+                    texte = "Désolé, aucun texte n'est disponible pour cet article.";
                 }
 
-                // 2. On prépare la synthèse vocale
-                const lecture = new SpeechSynthesisUtterance(`${titre}. ${texte}`);
-                lecture.lang = 'fr-FR';
-                
-                // 3. Afficher le bouton stop rouge
                 btnStop.style.display = 'block';
-                
-                // 4. Cacher le bouton stop quand la lecture est finie
-                lecture.onend = () => {
-                    btnStop.style.display = 'none';
-                };
-                
-                // 5. Lancer la voix
-                window.speechSynthesis.speak(lecture);
+
+                // On annonce le titre en premier
+                const utteranceTitre = new SpeechSynthesisUtterance(titre);
+                utteranceTitre.lang = 'fr-FR';
+                window.speechSynthesis.speak(utteranceTitre);
+
+                // Découpage par paragraphes (retour à la ligne) pour éviter le plantage du TTS Android
+                const paragraphes = texte.split('\n').filter(p => p.trim().length > 0);
+
+                paragraphes.forEach((paragraphe, index) => {
+                    const lecture = new SpeechSynthesisUtterance(paragraphe);
+                    lecture.lang = 'fr-FR';
+                    
+                    // Cacher le bouton stop uniquement quand le tout dernier paragraphe est terminé
+                    if (index === paragraphes.length - 1) {
+                        lecture.onend = () => {
+                            btnStop.style.display = 'none';
+                        };
+                    }
+                    
+                    window.speechSynthesis.speak(lecture);
+                });
                 
             } catch (error) {
                 alert("Erreur lors de la récupération du texte.");
             }
         }
 
-        // Fonction pour couper la parole manuellement
         function stopperLecture() {
             window.speechSynthesis.cancel();
             document.getElementById('btnStop').style.display = 'none';
