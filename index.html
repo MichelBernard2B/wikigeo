@@ -8,18 +8,17 @@
     <meta name="theme-color" content="#007bff">
     <link rel="apple-touch-icon" href="icon.png">
     <style>
-        body { font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; background-color: #f9f9f9; }
+        body { font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; background-color: #f9f9f9; padding-bottom: 100px; }
         button { font-size: 16px; border: none; border-radius: 8px; cursor: pointer; color: white; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         .btn-principal { padding: 15px; background-color: #007bff; width: 100%; margin-bottom: 20px; }
-        .btn-principal:active { background-color: #0056b3; }
         input { padding: 12px; font-size: 16px; width: 100%; margin-bottom: 20px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 8px; }
         .result { background: white; margin-bottom: 10px; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .result a { text-decoration: none; color: #333; font-weight: bold; display: block; margin-bottom: 15px; }
-        .result span { color: #666; font-size: 0.9em; }
         .boutons-lecture { display: flex; gap: 10px; margin-top: 10px; }
         .btn-ecouter { background-color: #28a745; flex: 1; padding: 10px; font-size: 14px; }
         .btn-complet { background-color: #17a2b8; }
-        .btn-stop { background-color: #dc3545; display: none; width: 100%; padding: 15px; margin-bottom: 20px; font-weight: bold; }
+        #lecteurAudioContainer { position: fixed; bottom: 0; left: 0; right: 0; background: #333; color: white; padding: 15px; display: none; text-align: center; box-shadow: 0 -4px 10px rgba(0,0,0,0.2); }
+        audio { width: 100%; margin-top: 10px; outline: none; }
         #status { font-style: italic; color: #555; margin-bottom: 20px; text-align: center; }
     </style>
 </head>
@@ -29,148 +28,120 @@
     <input type="number" id="rayon" value="2000">
     <button class="btn-principal" onclick="chercher()">Localiser et chercher</button>
     
-    <button id="btnStop" class="btn-stop" onclick="stopperLecture()">🛑 Stopper la lecture</button>
-    
     <div id="status">Prêt</div>
     <div id="resultats"></div>
 
+    <!-- Le véritable lecteur média qui fonctionnera écran éteint -->
+    <div id="lecteurAudioContainer">
+        <div id="titreLecture" style="font-weight: bold; font-size: 14px;">En lecture...</div>
+        <audio id="lecteurMédia" controls autoplay></audio>
+    </div>
+
     <script>
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js');
-        }
+        if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js'); }
 
-        // --- NOUVEAU : Gestion de l'écran (Wake Lock) ---
-        let wakeLock = null;
-
-        async function maintenirEcranAllume() {
-            if ('wakeLock' in navigator) {
-                try {
-                    wakeLock = await navigator.wakeLock.request('screen');
-                } catch (err) {
-                    console.log(`Erreur Wake Lock: ${err.message}`);
-                }
+        let fileAttenteAudio = [];
+        const lecteur = document.getElementById('lecteurMédia');
+        
+        // Quand un morceau audio se termine, on lance le suivant automatiquement
+        lecteur.addEventListener('ended', function() {
+            if (fileAttenteAudio.length > 0) {
+                lecteur.src = fileAttenteAudio.shift();
+                lecteur.play();
+            } else {
+                document.getElementById('lecteurAudioContainer').style.display = 'none';
             }
-        }
+        });
 
-        function libererEcran() {
-            if (wakeLock !== null) {
-                wakeLock.release().then(() => { wakeLock = null; });
-            }
+        // Enregistrement pour contrôler le lecteur sur l'écran de verrouillage
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.setActionHandler('pause', function() { lecteur.pause(); });
+            navigator.mediaSession.setActionHandler('play', function() { lecteur.play(); });
         }
-        // -------------------------------------------------
 
         function chercher() {
             const status = document.getElementById('status');
             const resultatsDiv = document.getElementById('resultats');
             resultatsDiv.innerHTML = '';
-            
-            if (!navigator.geolocation) {
-                status.innerHTML = "Le GPS n'est pas supporté par votre navigateur.";
-                return;
-            }
+            if (!navigator.geolocation) return status.innerHTML = "GPS non supporté.";
 
-            status.innerHTML = "Acquisition du signal GPS...";
-
+            status.innerHTML = "Recherche GPS...";
             navigator.geolocation.getCurrentPosition(async (position) => {
                 const lat = position.coords.latitude;
                 const lon = position.coords.longitude;
                 const rayon = document.getElementById('rayon').value;
                 
-                status.innerHTML = `Position : ${lat.toFixed(4)}, ${lon.toFixed(4)}. Recherche...`;
-
+                status.innerHTML = `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
                 const url = `https://fr.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord=${lat}|${lon}&gsradius=${rayon}&gslimit=50&format=json&origin=*`;
 
                 try {
                     const response = await fetch(url);
                     const data = await response.json();
                     const articles = data.query.geosearch;
-
-                    if (articles.length === 0) {
-                        status.innerHTML = "Aucun article trouvé dans ce rayon.";
-                        return;
-                    }
-
                     status.innerHTML = `${articles.length} lieux trouvés.`;
 
                     articles.forEach(art => {
                         const div = document.createElement('div');
                         div.className = 'result';
-                        const titreSecurise = art.title.replace(/'/g, "\\'");
-                        
+                        const titreSec = art.title.replace(/'/g, "\\'");
                         div.innerHTML = `
-                            <a href="https://fr.wikipedia.org/?curid=${art.pageid}" target="_blank">${art.title} <br><span>📍 à ${Math.round(art.dist)} mètres</span></a>
+                            <a href="https://fr.wikipedia.org/?curid=${art.pageid}" target="_blank">${art.title} <br><span style="color:#666">📍 ${Math.round(art.dist)} mètres</span></a>
                             <div class="boutons-lecture">
-                                <button class="btn-ecouter" onclick="lireArticle(${art.pageid}, '${titreSecurise}', 'resume')">🔊 Résumé</button>
-                                <button class="btn-ecouter btn-complet" onclick="lireArticle(${art.pageid}, '${titreSecurise}', 'complet')">📖 Complet</button>
+                                <button class="btn-ecouter" onclick="lireAvecMedia(${art.pageid}, '${titreSec}', 'resume')">🔊 Résumé</button>
+                                <button class="btn-ecouter btn-complet" onclick="lireAvecMedia(${art.pageid}, '${titreSec}', 'complet')">📖 Complet</button>
                             </div>
                         `;
                         resultatsDiv.appendChild(div);
                     });
-                } catch (error) {
-                    status.innerHTML = `Erreur réseau : ${error.message}`;
-                }
-            }, (error) => {
-                status.innerHTML = `Erreur GPS : Autorisez la localisation. (${error.message})`;
-            }, { enableHighAccuracy: true });
+                } catch (e) { status.innerHTML = "Erreur réseau."; }
+            }, () => { status.innerHTML = "Activez le GPS."; }, { enableHighAccuracy: true });
         }
 
-        async function lireArticle(pageid, titre, mode) {
-            stopperLecture(); 
-            const btnStop = document.getElementById('btnStop');
+        async function lireAvecMedia(pageid, titre, mode) {
+            const container = document.getElementById('lecteurAudioContainer');
+            document.getElementById('titreLecture').innerText = "Génération de l'audio pour : " + titre;
+            container.style.display = 'block';
             
+            lecteur.pause();
+            fileAttenteAudio = [];
+
             try {
                 let url = `https://fr.wikipedia.org/w/api.php?action=query&prop=extracts&pageids=${pageid}&explaintext=1&format=json&origin=*`;
-                if (mode === 'resume') {
-                    url += '&exsentences=4';
-                }
+                if (mode === 'resume') url += '&exsentences=4';
 
                 const response = await fetch(url);
                 const data = await response.json();
-                
-                const page = data.query.pages[pageid];
-                let texte = page.extract;
+                let texte = data.query.pages[pageid].extract;
                 
                 if (!texte) {
-                    texte = "Désolé, aucun texte n'est disponible pour cet article.";
+                    document.getElementById('titreLecture').innerText = "Pas de texte disponible.";
+                    return;
                 }
 
-                btnStop.style.display = 'block';
+                texte = titre + ". " + texte;
+
+                // Découpage du texte pour l'API TTS
+                const phrases = texte.match(/[^.!?]+[.!?]+/g) || [texte];
                 
-                // On verrouille l'écran allumé dès que la lecture commence
-                maintenirEcranAllume();
-
-                const utteranceTitre = new SpeechSynthesisUtterance(titre);
-                utteranceTitre.lang = 'fr-FR';
-                window.speechSynthesis.speak(utteranceTitre);
-
-                const paragraphes = texte.split('\n').filter(p => p.trim().length > 0);
-
-                paragraphes.forEach((paragraphe, index) => {
-                    const lecture = new SpeechSynthesisUtterance(paragraphe);
-                    lecture.lang = 'fr-FR';
-                    
-                    if (index === paragraphes.length - 1) {
-                        lecture.onend = () => {
-                            btnStop.style.display = 'none';
-                            // On autorise l'écran à s'éteindre quand c'est fini
-                            libererEcran();
-                        };
+                phrases.forEach(phrase => {
+                    let texteEncode = encodeURIComponent(phrase.trim());
+                    if (phrase.length < 200 && phrase.length > 2) {
+                        fileAttenteAudio.push(`https://translate.google.com/translate_tts?ie=UTF-8&tl=fr&client=tw-ob&q=${texteEncode}`);
                     }
-                    
-                    window.speechSynthesis.speak(lecture);
                 });
-                
-            } catch (error) {
-                alert("Erreur lors de la récupération du texte.");
-                libererEcran();
-            }
-        }
 
-        function stopperLecture() {
-            window.speechSynthesis.cancel();
-            document.getElementById('btnStop').style.display = 'none';
-            // On autorise l'écran à s'éteindre si on coupe manuellement
-            libererEcran();
+                if (fileAttenteAudio.length > 0) {
+                    document.getElementById('titreLecture').innerText = "Lecture : " + titre;
+                    lecteur.src = fileAttenteAudio.shift();
+                    
+                    if ('mediaSession' in navigator) {
+                        navigator.mediaSession.metadata = new MediaMetadata({ title: titre, artist: 'WikiGeo' });
+                    }
+                }
+
+            } catch (error) {
+                document.getElementById('titreLecture').innerText = "Erreur de chargement.";
+            }
         }
     </script>
 </body>
