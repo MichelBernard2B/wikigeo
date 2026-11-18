@@ -8,17 +8,14 @@
     <meta name="theme-color" content="#007bff">
     <link rel="apple-touch-icon" href="icon.png">
     <style>
-        body { font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; background-color: #f9f9f9; padding-bottom: 100px; }
+        body { font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; background-color: #f9f9f9; }
         button { font-size: 16px; border: none; border-radius: 8px; cursor: pointer; color: white; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         .btn-principal { padding: 15px; background-color: #007bff; width: 100%; margin-bottom: 20px; }
+        .btn-principal:active { background-color: #0056b3; }
         input { padding: 12px; font-size: 16px; width: 100%; margin-bottom: 20px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 8px; }
         .result { background: white; margin-bottom: 10px; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .result a { text-decoration: none; color: #333; font-weight: bold; display: block; margin-bottom: 15px; }
-        .boutons-lecture { display: flex; gap: 10px; margin-top: 10px; }
-        .btn-ecouter { background-color: #28a745; flex: 1; padding: 10px; font-size: 14px; }
-        .btn-complet { background-color: #17a2b8; }
-        #lecteurAudioContainer { position: fixed; bottom: 0; left: 0; right: 0; background: #333; color: white; padding: 15px; display: none; text-align: center; box-shadow: 0 -4px 10px rgba(0,0,0,0.2); }
-        audio { width: 100%; margin-top: 10px; outline: none; }
+        .btn-ecouter { background-color: #f26522; /* Couleur orange façon VLC */ width: 100%; padding: 12px; font-size: 15px; font-weight: bold; margin-top: 10px; }
         #status { font-style: italic; color: #555; margin-bottom: 20px; text-align: center; }
     </style>
 </head>
@@ -31,116 +28,120 @@
     <div id="status">Prêt</div>
     <div id="resultats"></div>
 
-    <!-- Le véritable lecteur média qui fonctionnera écran éteint -->
-    <div id="lecteurAudioContainer">
-        <div id="titreLecture" style="font-weight: bold; font-size: 14px;">En lecture...</div>
-        <audio id="lecteurMédia" controls autoplay></audio>
-    </div>
-
     <script>
-        if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js'); }
-
-        let fileAttenteAudio = [];
-        const lecteur = document.getElementById('lecteurMédia');
-        
-        // Quand un morceau audio se termine, on lance le suivant automatiquement
-        lecteur.addEventListener('ended', function() {
-            if (fileAttenteAudio.length > 0) {
-                lecteur.src = fileAttenteAudio.shift();
-                lecteur.play();
-            } else {
-                document.getElementById('lecteurAudioContainer').style.display = 'none';
-            }
-        });
-
-        // Enregistrement pour contrôler le lecteur sur l'écran de verrouillage
-        if ('mediaSession' in navigator) {
-            navigator.mediaSession.setActionHandler('pause', function() { lecteur.pause(); });
-            navigator.mediaSession.setActionHandler('play', function() { lecteur.play(); });
+        // Enregistrement du Service Worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js');
         }
 
         function chercher() {
             const status = document.getElementById('status');
             const resultatsDiv = document.getElementById('resultats');
             resultatsDiv.innerHTML = '';
-            if (!navigator.geolocation) return status.innerHTML = "GPS non supporté.";
+            
+            if (!navigator.geolocation) {
+                status.innerHTML = "Le GPS n'est pas supporté par votre navigateur.";
+                return;
+            }
 
-            status.innerHTML = "Recherche GPS...";
+            status.innerHTML = "Acquisition du signal GPS...";
+
             navigator.geolocation.getCurrentPosition(async (position) => {
                 const lat = position.coords.latitude;
                 const lon = position.coords.longitude;
                 const rayon = document.getElementById('rayon').value;
                 
-                status.innerHTML = `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+                status.innerHTML = `Position : ${lat.toFixed(4)}, ${lon.toFixed(4)}. Recherche...`;
+
                 const url = `https://fr.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord=${lat}|${lon}&gsradius=${rayon}&gslimit=50&format=json&origin=*`;
 
                 try {
                     const response = await fetch(url);
                     const data = await response.json();
                     const articles = data.query.geosearch;
+
+                    if (articles.length === 0) {
+                        status.innerHTML = "Aucun article trouvé dans ce rayon.";
+                        return;
+                    }
+
                     status.innerHTML = `${articles.length} lieux trouvés.`;
 
                     articles.forEach(art => {
                         const div = document.createElement('div');
                         div.className = 'result';
-                        const titreSec = art.title.replace(/'/g, "\\'");
+                        const titreSecurise = art.title.replace(/'/g, "\\'");
+                        
                         div.innerHTML = `
-                            <a href="https://fr.wikipedia.org/?curid=${art.pageid}" target="_blank">${art.title} <br><span style="color:#666">📍 ${Math.round(art.dist)} mètres</span></a>
-                            <div class="boutons-lecture">
-                                <button class="btn-ecouter" onclick="lireAvecMedia(${art.pageid}, '${titreSec}', 'resume')">🔊 Résumé</button>
-                                <button class="btn-ecouter btn-complet" onclick="lireAvecMedia(${art.pageid}, '${titreSec}', 'complet')">📖 Complet</button>
-                            </div>
+                            <a href="https://fr.wikipedia.org/?curid=${art.pageid}" target="_blank">${art.title} <br><span style="color:#666">📍 à ${Math.round(art.dist)} mètres</span></a>
+                            <button class="btn-ecouter" onclick="envoyerVersVLC(${art.pageid}, '${titreSecurise}')">🎧 Écouter dans VLC</button>
                         `;
                         resultatsDiv.appendChild(div);
                     });
-                } catch (e) { status.innerHTML = "Erreur réseau."; }
-            }, () => { status.innerHTML = "Activez le GPS."; }, { enableHighAccuracy: true });
+                } catch (error) {
+                    status.innerHTML = `Erreur réseau : ${error.message}`;
+                }
+            }, (error) => {
+                status.innerHTML = `Erreur GPS : Autorisez la localisation. (${error.message})`;
+            }, { enableHighAccuracy: true });
         }
 
-        async function lireAvecMedia(pageid, titre, mode) {
-            const container = document.getElementById('lecteurAudioContainer');
-            document.getElementById('titreLecture').innerText = "Génération de l'audio pour : " + titre;
-            container.style.display = 'block';
-            
-            lecteur.pause();
-            fileAttenteAudio = [];
+        async function envoyerVersVLC(pageid, titre) {
+            const status = document.getElementById('status');
+            status.innerHTML = `Génération de l'audio pour ${titre}...`;
 
             try {
-                let url = `https://fr.wikipedia.org/w/api.php?action=query&prop=extracts&pageids=${pageid}&explaintext=1&format=json&origin=*`;
-                if (mode === 'resume') url += '&exsentences=4';
-
-                const response = await fetch(url);
+                // 1. Récupération du texte complet de Wikipédia
+                const urlWiki = `https://fr.wikipedia.org/w/api.php?action=query&prop=extracts&pageids=${pageid}&explaintext=1&format=json&origin=*`;
+                const response = await fetch(urlWiki);
                 const data = await response.json();
                 let texte = data.query.pages[pageid].extract;
                 
                 if (!texte) {
-                    document.getElementById('titreLecture').innerText = "Pas de texte disponible.";
+                    status.innerHTML = "Pas de texte disponible pour cet article.";
                     return;
                 }
 
+                // On ajoute le titre au début de la lecture
                 texte = titre + ". " + texte;
 
-                // Découpage du texte pour l'API TTS
+                // 2. Découpage en phrases
                 const phrases = texte.match(/[^.!?]+[.!?]+/g) || [texte];
                 
-                phrases.forEach(phrase => {
-                    let texteEncode = encodeURIComponent(phrase.trim());
-                    if (phrase.length < 200 && phrase.length > 2) {
-                        fileAttenteAudio.push(`https://translate.google.com/translate_tts?ie=UTF-8&tl=fr&client=tw-ob&q=${texteEncode}`);
+                // 3. Construction du fichier M3U
+                let m3u = "#EXTM3U\n";
+                phrases.forEach((phrase, index) => {
+                    const textePropre = phrase.trim();
+                    if (textePropre.length > 2) {
+                        // On redécoupe les phrases de plus de 200 caractères pour Google TTS
+                        const morceaux = textePropre.match(/.{1,200}(\s|$)/g) || [textePropre];
+                        morceaux.forEach((morceau, subIndex) => {
+                            const texteEncode = encodeURIComponent(morceau.trim());
+                            const urlAudio = `https://translate.google.com/translate_tts?ie=UTF-8&tl=fr&client=tw-ob&q=${texteEncode}`;
+                            m3u += `#EXTINF:-1,${titre} - Partie ${index + 1}.${subIndex + 1}\n${urlAudio}\n`;
+                        });
                     }
                 });
 
-                if (fileAttenteAudio.length > 0) {
-                    document.getElementById('titreLecture').innerText = "Lecture : " + titre;
-                    lecteur.src = fileAttenteAudio.shift();
-                    
-                    if ('mediaSession' in navigator) {
-                        navigator.mediaSession.metadata = new MediaMetadata({ title: titre, artist: 'WikiGeo' });
-                    }
-                }
+                // 4. Création du fichier M3U virtuel et téléchargement
+                const blob = new Blob([m3u], { type: 'audio/x-mpegurl' });
+                const fichierUrl = URL.createObjectURL(blob);
+                
+                const a = document.createElement('a');
+                a.href = fichierUrl;
+                
+                // Nettoyage du titre pour créer un nom de fichier propre
+                const nomFichierPropre = titre.replace(/[^a-zA-Z0-9àáâäçèéêëìíîïñòóôöùúûü]/g, '_');
+                a.download = nomFichierPropre + '.m3u';
+                
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                
+                status.innerHTML = "✅ Fichier généré. Cliquez sur 'Ouvrir' dans la notification de téléchargement.";
 
             } catch (error) {
-                document.getElementById('titreLecture').innerText = "Erreur de chargement.";
+                status.innerHTML = "Erreur lors de la génération : " + error.message;
             }
         }
     </script>
